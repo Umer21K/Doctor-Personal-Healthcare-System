@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""
-Optimized training script with Windows compatibility fixes
-"""
+
 import os
 import argparse
 import multiprocessing
@@ -74,24 +71,21 @@ def main():
     args = parse_args()
     torch.manual_seed(args.seed)
 
-    # Windows performance tweaks
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    # Device & workers (reduced for Windows stability)
     assert torch.cuda.is_available(), "CUDA is required for GPU training"
     cpu_workers = max(1, multiprocessing.cpu_count() - 2)
     print(f"Using {cpu_workers} data loader workers.")
 
-    # Data prep
+
     raw_ds = load_medical_data(args.data)
     ds = to_sharegpt(raw_ds, merged_prompt="{instruction}\n\nContext:\n{input}", output_column_name="output")
     ds = standardize_sharegpt(ds)
     chat_template = "You are a clinical support system.\nPatient Case:\n{INPUT}\nRecommended Tests:\n{OUTPUT}"
 
-    # Model load (cache-first)
     name = args.model_name
     try:
         print("Loading model from local cache...")
@@ -107,12 +101,10 @@ def main():
             model_name=path, max_seq_length=2048, load_in_4bit=True,
             device_map="auto", local_files_only=True
         )
-
-    # --- FIX: Remove Unsloth-injected method before multiprocessing ---
+]
     if hasattr(tokenizer, "unsloth_push_to_hub"):
         delattr(tokenizer, "unsloth_push_to_hub")
 
-    # Apply LoRA adapters
     model = FastLanguageModel.get_peft_model(
         model, r=8, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         lora_alpha=32, lora_dropout=0.1, bias="none",
@@ -120,7 +112,6 @@ def main():
     )
     model.gradient_checkpointing_enable()
 
-    # Tokenize & collate
     ds = apply_chat_template(ds, tokenizer, chat_template)
     ds = ds.map(
         lambda b: tokenizer(b['text'], truncation=True, padding='max_length', max_length=1024),
@@ -128,7 +119,6 @@ def main():
     )
     collator = DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8)
 
-    # Training arguments with Windows optimizations
     fp16 = torch.cuda.is_available() and not torch.cuda.is_bf16_supported()
     bf16 = torch.cuda.is_bf16_supported()
     training_args = TrainingArguments(
@@ -149,28 +139,24 @@ def main():
         logging_steps=50,
         save_steps=200,
         save_total_limit=3,
-        dataloader_num_workers=0,  # no subprocesses for DataLoader on Windows
+        dataloader_num_workers=0,  
         gradient_checkpointing=True,
         seed=args.seed,
     )
 
-    # Initialize trainer with callbacks
     callbacks = [EarlyStoppingCallback(early_stopping_patience=3), SavePeftModelCallback()]
     trainer = SFTTrainer(
         model=model, tokenizer=tokenizer, args=training_args,
         train_dataset=ds,
         eval_dataset=ds.select(range(min(500, len(ds)))),
         data_collator=collator,
-        packing=False,  # Disabled packing for Windows compatibility
+        packing=False,  
     )
-
-    # Train & save
     trainer.train()
 
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-
-    # Ollama deployment
+]
     mf = args.output_dir / "Modelfile"
     mf.write_text(f"""FROM {args.output_dir}
 SYSTEM You are a medical expert specializing in lab-test recommendations.
@@ -182,7 +168,7 @@ PARAMETER num_ctx 2048
 
 
 if __name__ == '__main__':
-    # Windows multiprocessing fix
+
     multiprocessing.set_start_method("spawn", force=True)
     multiprocessing.freeze_support()
     main()
