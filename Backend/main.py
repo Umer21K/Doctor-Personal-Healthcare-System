@@ -1,6 +1,6 @@
 import pandas as pd
 
-# 1. Read source CSVs (adjust filenames/paths as needed)
+
 reg   = pd.read_csv("mr_registiration.csv",
                     parse_dates=['MR_REG_DATE', 'MR_DOB'])
 pres  = pd.read_csv("presinting_complain.csv",
@@ -18,21 +18,18 @@ med   = pd.read_csv("medication.csv",
                     parse_dates=['INSERT_DT'],
                     low_memory=False)
 
-# 2. Normalize key types so merges won’t fail
 for df_source in (reg, pres, vitals, diag, lr, med):
     df_source['MR_CODE'] = df_source['MR_CODE'].astype(str)
 
 lr['LRS_NO']   = lr['LRS_NO'].astype(str)
 lres['LRS_NO'] = lres['LRS_NO'].astype(str)
 
-# 3. Base merge: registration + presenting complaint
 df = (
     pres.merge(reg, on='MR_CODE', how='left')
         .rename(columns={'MR_VISIT_DATE': 'VISIT_DATE'})
 )
 df['AGE_AT_VISIT'] = ((df['VISIT_DATE'] - df['MR_DOB']).dt.days / 365.25).round(1)
 
-# 4. Merge vitals
 vitals = vitals.rename(columns={
     'MR_VISITDATE':'VISIT_DATE',
     'VITAL_BP_SIS':'BP_SYSTOLIC',
@@ -52,7 +49,6 @@ df = df.merge(
     on=['MR_CODE','VISIT_DATE'], how='left'
 )
 
-# 5. Merge diagnoses
 diag = diag.rename(columns={'MR_VISIT_DATE':'VISIT_DATE'})
 df = df.merge(
     diag[['MR_CODE','VISIT_DATE',
@@ -66,7 +62,7 @@ df = df.merge(
     'MED_REC_NEXT_PLN_CODE':'NEXT_PLAN'
 })
 
-# 6. Aggregate lab requests
+
 lr_group = (
     lr
     .groupby(['MR_CODE','MR_VISIT_DATE'])['LAB_TEST']
@@ -76,7 +72,6 @@ lr_group = (
                      'LAB_TEST':'LAB_REQUESTS'})
 )
 
-# 7. Combine lab requests with results, then aggregate
 lres_comb = (
     lr.merge(lres, on='LRS_NO', how='left', suffixes=('_REQ','_RES'))
       .assign(LAB_TEST_REQ=lambda d: d['LAB_TEST_REQ'].astype(str))
@@ -99,8 +94,6 @@ lres_group = (
 df = df.merge(lr_group, on=['MR_CODE','VISIT_DATE'], how='left')
 df = df.merge(lres_group, on=['MR_CODE','VISIT_DATE'], how='left')
 
-# 8. Aggregate medications
-# Ensure MR_REG_DT_TIME is datetime
 med['MR_REG_DT_TIME'] = pd.to_datetime(med['MR_REG_DT_TIME'], errors='coerce')
 med['VISIT_DATE']     = med['MR_REG_DT_TIME'].dt.floor('d')
 
@@ -111,7 +104,6 @@ def format_med(group):
         if pd.notna(row['ITEM_NAME'])
     )
 
-# **Group only on the detail columns** to avoid the deprecation warning
 med_series = (
     med
     .groupby(['MR_CODE','VISIT_DATE'])[['ITEM_NAME','DOSAGE','INT_CODE']]
@@ -119,12 +111,10 @@ med_series = (
 )
 med_group = med_series.to_frame('MEDICATIONS').reset_index()
 
-# Merge meds into main DF
 df['VISIT_DATE']       = pd.to_datetime(df['VISIT_DATE'])
 med_group['VISIT_DATE'] = pd.to_datetime(med_group['VISIT_DATE'])
 df = df.merge(med_group, on=['MR_CODE','VISIT_DATE'], how='left')
 
-# 9. Reorder & export
 final_cols = [
     'MR_CODE','MR_REG_DATE','MR_SEX','MR_DOB','VISIT_DATE','AGE_AT_VISIT',
     'PRESENTING_COMPLAIN','PRE_COM_DURATION',
